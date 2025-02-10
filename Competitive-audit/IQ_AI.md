@@ -38,8 +38,6 @@ The `maxSwapAmount` function in the `BootstrapPool` contract contains a vulnerab
 This can cause problems like failed transactions, overflows, or potential exploits where the contract function is used. Also a user using this function will recive quite a strange number for `maxSwapAmoun`: (115792089237316195423570985008687907853269984665640564039457584007913129639935)
 
 
-
-
 ### Recommended Solution:
 
 The `maxSwapAmount` function should call the `getAmountIn` function for both cases, ensuring consistent calculation of the swap amount based on available liquidity.
