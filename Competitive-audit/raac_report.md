@@ -1,3 +1,70 @@
+## Title Funds Locked Due to Misconfigured Treasury Address
+
+## Summary
+
+The function `applyTreasuryUpdate()` updates the `treasury` address to a new one after a timelock period. However, the function does not handle the transfer of collected fees from the old treasury to the new treasury before updating the address. This could lead to potential fund mismanagement if there are remaining balances in the old treasury that are not explicitly transferred to the new address before the update.
+
+## Vulnerability Details
+
+Code sniped is found in `2025-02-raac\contracts\core\collectors\FeeCollector.sol` on lines 306-312
+
+```solidity
+function applyTreasuryUpdate() external {
+        if (pendingTreasury.newAddress == address(0)) revert InvalidAddress();
+        if (block.timestamp < pendingTreasury.effectiveTime) revert UnauthorizedCaller();
+        
+        //@audit what is hapening with the treasury.balance and the fees collected there
+        // all collected fees in the old treasury should be transferred to the new treasury
+        // before the address is updated
+        treasury = pendingTreasury.newAddress;
+        delete pendingTreasury;
+    }
+```
+
+## Impact
+
+Loss or misallocation of protocol fees if the old treasury retains funds that should be used for protocol operations.
+
+## Tools Used
+
+Manual review
+
+## Recommendations
+
+To mitigate this issue, modify `applyTreasuryUpdate()` to include logic that transfers all collected fees from the old treasury to the new treasury before updating the address. That is completely necessary every time a treasury is changed (even if the contract uses/distributes the fees in another function).
+
+Suggested implementation:
+
+```solidity
+function applyTreasuryUpdate() external {
+    if (pendingTreasury.newAddress == address(0)) revert InvalidAddress();
+    if (block.timestamp < pendingTreasury.effectiveTime) revert UnauthorizedCaller();
+    
+    // Ensure all collected fees are transferred before updating
+    uint256 balance = raacToken.balanceOf(treasury);
+    if (balance > 0) {
+        raacToken.safeTransfer(pendingTreasury.newAddress, balance);
+    }
+    
+    // Update treasury address
+    treasury = pendingTreasury.newAddress;
+    delete pendingTreasury;
+}
+```
+
+**Benefits of Fix:**
+
+* Ensures that collected fees remain within the protocol’s control and are not stranded in an old treasury.
+* Enhances security by ensuring that the new treasury starts with the correct funds.
+
+## Risk Assessment:
+
+Severity: High
+
+Reasoning:
+If the fees collected by the treasury aren't properly transferred to the new address before updating it (that is always the case when calling `applyTreasuryUpdate()`), there is a risk that those funds could be lost. This is a significant issue, especially if the treasury holds substantial amounts of funds. The loss of fees would directly impact the contract’s ability to distribute or use those funds, which could be catastrophic for the contract’s intended functionality.
+
+
 ## Title Unsafe ERC20 Transfers: Vulnerability in Deposit and Withdraw Functions
 
 ## Summary
