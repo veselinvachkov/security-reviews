@@ -1,3 +1,113 @@
+## Title Unrestricted Boost Delegation
+
+## Summary
+
+In the `delegateBoost` function of the `BoostController` contract, where a user can delegate a boost to another address without updating their balance or the `userBoosts` mapping properly. This leads to a duplication of funds issue, allowing both the delegator and the recipient to utilize the same boost amount multiple times without restriction.
+
+## Vulnerability Details
+
+The `delegateBoost` function allows a user to delegate a boost to another address, storing the delegation details in the `userBoosts` mapping. However, the function does not update the delegator's balance or enforce any restrictions on repeated delegations. This results in a scenario where a user can delegate multiple times TO OTHER DIFFERENT ADDRESSES without boundaries, effectively duplicating the amount of boost available in the system.
+
+File location: 2025-02-raac\contracts\core\governance\boost\BoostController.sol
+
+### Relevant Code:
+
+```solidity
+function delegateBoost(
+    address to,
+    uint256 amount,
+    uint256 duration
+) external override nonReentrant {
+    if (paused()) revert EmergencyPaused();
+    if (to == address(0)) revert InvalidPool();
+    if (amount == 0) revert InvalidBoostAmount();
+    if (duration < MIN_DELEGATION_DURATION || duration > MAX_DELEGATION_DURATION) 
+        revert InvalidDelegationDuration();
+    
+    uint256 userBalance = IERC20(address(veToken)).balanceOf(msg.sender);
+    if (userBalance < amount) revert InsufficientVeBalance();
+    
+    UserBoost storage delegation = userBoosts[msg.sender][to];
+    if (delegation.amount > 0) revert BoostAlreadyDelegated();
+    
+    delegation.amount = amount;
+    delegation.expiry = block.timestamp + duration;
+    delegation.delegatedTo = to;
+    delegation.lastUpdateTime = block.timestamp;
+    
+    emit BoostDelegated(msg.sender, to, amount, duration);
+}
+```
+
+The following lines check if the delegated address has already been delegated and does not prevent from delegating more than one address. Also it does not check if the user has already delegated his entire `userBalance`.
+
+```solidity
+        uint256 userBalance = IERC20(address(veToken)).balanceOf(msg.sender);
+        if (userBalance < amount) revert InsufficientVeBalance();
+        
+        UserBoost storage delegation = userBoosts[msg.sender][to];
+        if (delegation.amount > 0) revert BoostAlreadyDelegated();
+```
+
+The function allows multiple delegations without properly updating the delegator's balance or preventing re-delegation. This results in an unlimited boost duplication exploit.
+
+## Impact
+
+Example of Exploit:
+
+A user locks 1,000 veTokens and delegates to 3 or 3000 different addresses(there is no limitations).
+Each recipient might get a boost as if they alone had received the full delegation.
+This could result in a 3x/3000x boost allocation instead of the intended 1x.
+
+* **Boost Duplication:** A user can delegate more boost than they actually possess, leading to an inflation of the boost supply.
+* **Exploitation for Unfair Advantage:** Malicious actors can repeatedly delegate their boost, leading to unfair allocation of rewards and disrupting the system's intended functionality.
+
+A delegated address can call this function updating the poolBoost.totalBoost. Pools may end up with more boost than actually exists, affecting calculations in critical parts of the protocol.
+
+```solidity
+    function updateUserBoost(address user, address pool) external override nonReentrant whenNotPaused {
+        if (paused()) revert EmergencyPaused();
+        if (user == address(0)) revert InvalidPool();
+        if (!supportedPools[pool]) revert PoolNotSupported();
+        
+        UserBoost storage userBoost = userBoosts[user][pool];
+        PoolBoost storage poolBoost = poolBoosts[pool];
+        
+        uint256 oldBoost = userBoost.amount;
+        // Calculate new boost based on current veToken balance
+        uint256 newBoost = _calculateBoost(user, pool, 10000); // Base amount
+        
+        userBoost.amount = newBoost;
+        userBoost.lastUpdateTime = block.timestamp;
+        
+        // Update pool totals safely
+        if (newBoost >= oldBoost) {
+            poolBoost.totalBoost = poolBoost.totalBoost + (newBoost - oldBoost);
+        } else {
+            poolBoost.totalBoost = poolBoost.totalBoost - (oldBoost - newBoost);
+        }
+        poolBoost.workingSupply = newBoost; // Set working supply directly to new boost
+        poolBoost.lastUpdateTime = block.timestamp;
+        
+        emit BoostUpdated(user, pool, newBoost);
+        emit PoolBoostUpdated(pool, poolBoost.totalBoost, poolBoost.workingSupply);
+    }
+```
+
+## Tools Used
+
+Manual review
+
+## Recommendations
+
+* **Deduct Delegated Boost from the User’s Balance:** The contract should ensure that whenever a boost is delegated, the user’s effective balance is reduced accordingly.
+* **Track and Prevent Multiple Delegations:** The contract should modify the logic to prevent a user from delegating multiple times without proper balance updates.
+
+## Severity
+
+The vulnerability is of high severity as it enables users to delegate more boost than they actually possess, resulting in the inflation of the boost supply. This exploit can be leveraged by malicious actors to gain unfair advantages, distort reward distributions, and create significant imbalances within the protocol. The lack of proper checks on multiple delegations undermines the system's intended functionality. Consequently, this flaw poses a critical risk to the integrity and stability of the entire system.
+
+
 ## Title Funds Locked Due to Misconfigured Treasury Address
 
 ## Summary
