@@ -1,6 +1,6 @@
 ## Findings and Recommendations
 
-### 1. **Violation of Checks-Effects-Interactions Pattern**
+### 1. Violation of Checks-Effects-Interactions Pattern
 (The severity is low because there is not really a direct problem, but the convention must be followed)
 
 Link to afected code: 

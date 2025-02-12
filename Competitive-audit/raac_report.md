@@ -1,4 +1,4 @@
-## Title Unrestricted Boost Delegation
+## [H-1] Unrestricted Boost Delegation
 
 ## Summary
 
@@ -108,7 +108,7 @@ Manual review
 The vulnerability is of high severity as it enables users to delegate more boost than they actually possess, resulting in the inflation of the boost supply. This exploit can be leveraged by malicious actors to gain unfair advantages, distort reward distributions, and create significant imbalances within the protocol. The lack of proper checks on multiple delegations undermines the system's intended functionality. Consequently, this flaw poses a critical risk to the integrity and stability of the entire system.
 
 
-## Title Funds Locked Due to Misconfigured Treasury Address
+## [H-2] Funds Locked Due to Misconfigured Treasury Address
 
 ## Summary
 
@@ -175,7 +175,7 @@ Reasoning:
 If the fees collected by the treasury aren't properly transferred to the new address before updating it (that is always the case when calling `applyTreasuryUpdate()`), there is a risk that those funds could be lost. This is a significant issue, especially if the treasury holds substantial amounts of funds. The loss of fees would directly impact the contract’s ability to distribute or use those funds, which could be catastrophic for the contract’s intended functionality.
 
 
-## Title Unsafe ERC20 Transfers: Vulnerability in Deposit and Withdraw Functions
+## [M-1] Unsafe ERC20 Transfers: Vulnerability in Deposit and Withdraw Functions
 
 ## Summary
 
