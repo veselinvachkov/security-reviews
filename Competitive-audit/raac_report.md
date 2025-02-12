@@ -6,7 +6,7 @@ In the `delegateBoost` function of the `BoostController` contract, where a user 
 
 ## Vulnerability Details
 
-The `delegateBoost` function allows a user to delegate a boost to another address, storing the delegation details in the `userBoosts` mapping. However, the function does not update the delegator's balance or enforce any restrictions on repeated delegations. This results in a scenario where a user can delegate multiple times TO OTHER DIFFERENT ADDRESSES without boundaries, effectively duplicating the amount of boost available in the system.
+The `delegateBoost` function allows a user to delegate a boost to another address, storing the delegation details in the `userBoosts` mapping. However, the function does not update the delegator's balance or enforce any restrictions on repeated delegations. This results in a scenario where a user can delegate multiple times TO OTHER DIFFERENT ADDRESSES WITHOUT BOUNDARIES, effectively duplicating the amount of boost available in the system.
 
 File location: 2025-02-raac\contracts\core\governance\boost\BoostController.sol
 
@@ -51,48 +51,22 @@ The following lines check if the delegated address has already been delegated an
 
 The function allows multiple delegations without properly updating the delegator's balance or preventing re-delegation. This results in an unlimited boost duplication exploit.
 
+## Example of Exploit:
+
+Since the contract **does not check if Alice has enough veRAAC to back all delegations**, Alice could theoretically:
+
+* Delegate **10,000 veRAAC** to Bob
+* Delegate **10,000 veRAAC** to Charlie
+* Delegate **10,000 veRAAC** to Dave
+* And so on…
+
+Each recipient would **receive a boost as if the veRAAC were fully available**, even though Alice only has **10,000 veRAAC total**. This effectively **creates "fake" boost power** out of thin air.
+
 ## Impact
-
-Example of Exploit:
-
-A user locks 1,000 veTokens and delegates to 3 or 3000 different addresses(there is no limitations).
-Each recipient might get a boost as if they alone had received the full delegation.
-This could result in a 3x/3000x boost allocation instead of the intended 1x.
 
 * **Boost Duplication:** A user can delegate more boost than they actually possess, leading to an inflation of the boost supply.
 * **Exploitation for Unfair Advantage:** Malicious actors can repeatedly delegate their boost, leading to unfair allocation of rewards and disrupting the system's intended functionality.
-
-A delegated address can call this function updating the poolBoost.totalBoost. Pools may end up with more boost than actually exists, affecting calculations in critical parts of the protocol.
-
-```solidity
-    function updateUserBoost(address user, address pool) external override nonReentrant whenNotPaused {
-        if (paused()) revert EmergencyPaused();
-        if (user == address(0)) revert InvalidPool();
-        if (!supportedPools[pool]) revert PoolNotSupported();
-        
-        UserBoost storage userBoost = userBoosts[user][pool];
-        PoolBoost storage poolBoost = poolBoosts[pool];
-        
-        uint256 oldBoost = userBoost.amount;
-        // Calculate new boost based on current veToken balance
-        uint256 newBoost = _calculateBoost(user, pool, 10000); // Base amount
-        
-        userBoost.amount = newBoost;
-        userBoost.lastUpdateTime = block.timestamp;
-        
-        // Update pool totals safely
-        if (newBoost >= oldBoost) {
-            poolBoost.totalBoost = poolBoost.totalBoost + (newBoost - oldBoost);
-        } else {
-            poolBoost.totalBoost = poolBoost.totalBoost - (oldBoost - newBoost);
-        }
-        poolBoost.workingSupply = newBoost; // Set working supply directly to new boost
-        poolBoost.lastUpdateTime = block.timestamp;
-        
-        emit BoostUpdated(user, pool, newBoost);
-        emit PoolBoostUpdated(pool, poolBoost.totalBoost, poolBoost.workingSupply);
-    }
-```
+* Pools may end up with more boost than actually exists, affecting calculations in critical parts of the protocol.
 
 ## Tools Used
 
@@ -102,6 +76,7 @@ Manual review
 
 * **Deduct Delegated Boost from the User’s Balance:** The contract should ensure that whenever a boost is delegated, the user’s effective balance is reduced accordingly.
 * **Track and Prevent Multiple Delegations:** The contract should modify the logic to prevent a user from delegating multiple times without proper balance updates.
+* **Add a mapping to track how much veRAAC a user has delegated in total**
 
 ## Severity
 
