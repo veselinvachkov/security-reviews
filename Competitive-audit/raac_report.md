@@ -1,3 +1,16 @@
+**Title: 2025-02-raac**
+
+Auditor: **vesko210**
+
+## Issues found
+|Severtity|Number of issues found
+| ------- | -------------------- |
+| High    | 2                    |
+| Medium  | 2                    |
+| Info    | 1                    |
+
+# Findings
+
 ## [H-1] Unrestricted Boost Delegation
 
 ## Summary
@@ -83,6 +96,7 @@ Manual review
 The vulnerability is of high severity as it enables users to delegate more boost than they actually possess, resulting in the inflation of the boost supply. This exploit can be leveraged by malicious actors to gain unfair advantages, distort reward distributions, and create significant imbalances within the protocol. The lack of proper checks on multiple delegations undermines the system's intended functionality. Consequently, this flaw poses a critical risk to the integrity and stability of the entire system.
 
 
+
 ## [H-2] Funds Locked Due to Misconfigured Treasury Address
 
 ## Summary
@@ -148,6 +162,7 @@ Severity: High
 
 Reasoning:
 If the fees collected by the treasury aren't properly transferred to the new address before updating it (that is always the case when calling `applyTreasuryUpdate()`), there is a risk that those funds could be lost. This is a significant issue, especially if the treasury holds substantial amounts of funds. The loss of fees would directly impact the contract’s ability to distribute or use those funds, which could be catastrophic for the contract’s intended functionality.
+
 
 
 ## [M-1] Unsafe ERC20 Transfers: Vulnerability in Deposit and Withdraw Functions
@@ -265,3 +280,114 @@ IERC20(token).safeTransfer(recipient, amount);
 ```
 
 This approach guarantees that the contract correctly handles token transfer failures, preventing incorrect balance updates and potential fund losses.
+
+
+
+## [M-2] Fee-On-Transfer Incompatibility with Balance Checks
+
+## Summary
+
+The RAAC token contract implements a fee-on-transfer mechanism that deducts a portion of tokens for taxation (swap and burn). However, this introduces issues in functions that assume exact token transfers, particularly in `StabilityPool:depositRAACFromPool`. The function checks for a precise balance update after `safeTransferFrom`, which fails due to the fee deduction. This could prevent deposits or lead to unintended contract behavior.
+
+## Vulnerability Details
+
+The `depositRAACFromPool` function attempts to verify an exact token transfer by comparing pre- and post-transfer balances:
+
+Location:  2025-02-raac\contracts\core\pools\StabilityPool\StabilityPool.sol \[326-337]
+
+```solidity
+uint256 preBalance = raacToken.balanceOf(address(this));
+raacToken.safeTransferFrom(msg.sender, address(this), amount);
+uint256 postBalance = raacToken.balanceOf(address(this));
+if (postBalance != preBalance + amount) revert InvalidTransfer();
+```
+
+However, since RAAC imposes a swap and burn tax, the contract receives **less than** the expected `amount`. As a result, the balance check fails, reverting the transaction.
+
+### **Tax Calculation in RAAC Transfers**
+
+RAAC deducts a fee on transfer:
+
+Location:  2025-02-raac\contracts\core\tokens\RAACToken.sol \[185-204]
+
+```solidity
+uint256 totalTax = amount.percentMul(baseTax);
+uint256 burnAmount = totalTax * burnTaxRate / baseTax;
+super._update(from, feeCollector, totalTax - burnAmount);
+super._update(from, address(0), burnAmount);
+super._update(from, to, amount - totalTax);
+```
+
+This means that `amount` sent by the sender is greater than what the contract actually receives, breaking deposit logic.
+
+## Impact
+
+* **Deposit Function Fails**: Users cannot deposit RAAC tokens from the liquidity pool due to failed balance checks.
+
+## Tools Used
+
+**Manual Review**
+
+## Recommendations
+
+**Option 1: Modify the deposit function to account for fee deductions**
+
+**Option 2: Whitelist Contract to Avoid Tax**
+
+Allow the deposit contract to be whitelisted, preventing fee deductions:
+
+```solidity
+raacToken.manageWhitelist(address(this), true);
+```
+
+## Conclusion
+
+The fee-on-transfer mechanism in RAAC introduces security and usability concerns when interacting with contracts that rely on precise balance calculations. Implementing one of the above solutions can mitigate these issues and ensure smooth functionality.
+
+
+
+## [I-1] Redundant code
+
+## Summary
+
+Severity: Informational
+
+If check is redundant, just remove it.
+
+Both `if` and `else` blocks are the same.
+
+Location: 2025-02-raac\contracts\core\governance\gauges\BaseGauge.sol        Line\[185-210]
+
+```solidity
+    /**
+     * @notice Updates weights for time-weighted average calculation
+     * @dev Creates new period or updates existing one with new weight
+     * @param newWeight New weight value to record
+     */
+    function _updateWeights(uint256 newWeight) internal {
+        uint256 currentTime = block.timestamp;
+        uint256 duration = getPeriodDuration();
+        
+        if (weightPeriod.startTime == 0) {
+            // For initial period, start from next period boundary
+            uint256 nextPeriodStart = ((currentTime / duration) + 1) * duration;
+            TimeWeightedAverage.createPeriod(
+                weightPeriod,
+                nextPeriodStart,
+                duration,
+                newWeight,
+                WEIGHT_PRECISION
+            );
+        } else {
+            // For subsequent periods, ensure we're creating a future period
+            uint256 nextPeriodStart = ((currentTime / duration) + 1) * duration;
+            TimeWeightedAverage.createPeriod(
+                weightPeriod,
+                nextPeriodStart,
+                duration,
+                newWeight,
+                WEIGHT_PRECISION
+            );
+        }
+    }
+```
