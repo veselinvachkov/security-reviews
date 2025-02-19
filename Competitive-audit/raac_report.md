@@ -5,13 +5,128 @@ Auditor: **vesko210**
 ## Issues found
 |Severtity|Number of issues found
 | ------- | -------------------- |
-| High    | 2                    |
-| Medium  | 2                    |
+| High    | 4                    |
+| Medium  | 3                    |
 | Info    | 1                    |
 
 # Findings
 
-## [H-1] Unrestricted Boost Delegation
+## [H-1] Changing the liquidity pool address leads to stuck funds
+
+## Summary
+
+If this function is called more than one time without transferring funds from the old liquidity pool to the new one, any RAAC tokens held in the previous liquidity pool will become inaccessible. This leads to a permanent loss of funds.
+
+## Vulnerability Details
+
+* There is a scenario where `setLiquidityPool` is called by mistake or the pool address needs to be changed for security reasons and the `owner` calls the `setLiquidityPool` function to do so, but this results in the loss of all tokens.
+
+### **Issue: Funds in the Old Liquidity Pool Are Not Transferred**
+
+* The function `setLiquidityPool` allows the contract owner to change the liquidity pool address without ensuring that any existing RAAC token balance in the old liquidity pool is transferred to the new one.
+* If `depositRAACFromPool` was previously used and RAAC tokens remain in the old liquidity pool, updating the liquidity pool address **does not** move those tokens.
+* As a result, those tokens become **unrecoverable**, leading to financial loss.
+
+### **Affected Code:**
+
+```solidity
+function setLiquidityPool(address _liquidityPool) external onlyOwner {
+    liquidityPool = _liquidityPool;
+    emit LiquidityPoolSet(_liquidityPool);
+}
+```
+
+## Impact
+
+* **Irrecoverable Tokens:** Since there is no built-in mechanism to reclaim tokens from the old liquidity pool, funds could be lost indefinitely.
+
+## Tools Used
+
+* **Manual Code Review**
+
+## Recommendations
+
+### **1. Implement a Safe Transfer Mechanism**
+
+Before updating `liquidityPool`, ensure that the old pool’s RAAC balance is transferred to the new pool:
+
+```Solidity
+function setLiquidityPool(address _liquidityPool) external onlyOwner {
+    require(_liquidityPool != address(0), "Invalid address");
+
+    if (liquidityPool != address(0)) {
+        uint256 balance = raacToken.balanceOf(liquidityPool);
+        if (balance > 0) {
+            raacToken.safeTransferFrom(liquidityPool, _liquidityPool, balance);
+        }
+    }
+
+    liquidityPool = _liquidityPool;
+    emit LiquidityPoolSet(_liquidityPool);
+}
+```
+
+This ensures that any existing RAAC tokens in the old liquidity pool are **transferred to the new pool** before updating the address.
+
+## Conclusion
+
+The current implementation of `setLiquidityPool` introduces a **risk of fund loss** if called multiple times. Implementing a **safe transfer mechanism**will prevent funds from being lost when the liquidity pool address is changed.
+
+## Severity
+
+* The likelihood might be low but the impact is critical.
+
+
+## [H-2] Fund mismanagement in Treasury
+
+### Summary
+
+The `allocateFunds` function incorrectly overwrites allocations instead of accumulating them, leading to fund mismanagement and potential financial discrepancies.
+
+### Vulnerability Details
+
+The current code would not be problematic if the `amount` to be allocated was calculated before the `allocateFunds` function was called. However, there is no such implementation, and the `amount` passed is never checked to see if it is updated with the user's current allocated funds. This results in overwriting, which would cause a loss of funds for the user.
+
+* **Affected Function:** `Treasury:allocateFunds`
+* **Issue:**
+
+```Solidity
+    /**
+     * @notice Allocates funds to a recipient
+     * @dev Only callable by accounts with ALLOCATOR_ROLE
+     * Records allocation without transferring tokens
+     * @param recipient Address to allocate funds to
+     * @param amount Amount of funds to allocate
+     */
+    function allocateFunds(
+        address recipient,
+        uint256 amount
+    ) external override onlyRole(ALLOCATOR_ROLE) {
+        if (recipient == address(0)) revert InvalidRecipient();
+        if (amount == 0) revert InvalidAmount();
+        
+       //@audit users allocation being overwritten rather than updated 
+        _allocations[msg.sender][recipient] = amount;
+        emit FundsAllocated(recipient, amount);
+    }
+```
+
+This resets the allocations instead of adding or subtracting them by deleting the previous allocations.
+
+### Impact
+
+* Loss of previous allocations, affecting fund tracking
+* Incorrect financial records and misallocations
+
+### Recommendations
+
+* **Modify the function to accumulate and also to subtract allocations.**
+
+## Conclusion 
+The current implementation of `allocateFunds` leads to unintended fund overwriting, resulting in financial inconsistencies. By modifying the function to properly adjust allocations instead of replacing them, the contract can ensure accurate fund tracking and prevent user losses. Implementing proper validation and accumulation logic will enhance security.
+
+
+## [H-3] Unrestricted Boost Delegation
 
 ## Summary
 
@@ -97,7 +212,7 @@ The vulnerability is of high severity as it enables users to delegate more boost
 
 
 
-## [H-2] Funds Locked Due to Misconfigured Treasury Address
+## [H-4] Funds Locked Due to Misconfigured Treasury Address
 
 ## Summary
 
@@ -344,6 +459,43 @@ raacToken.manageWhitelist(address(this), true);
 
 The fee-on-transfer mechanism in RAAC introduces security and usability concerns when interacting with contracts that rely on precise balance calculations. Implementing one of the above solutions can mitigate these issues and ensure smooth functionality.
 
+
+## [M-3] Boost Multiplier Calculation Issue
+
+### Summary
+
+The `getBoostMultiplier` function in the contract contains a issue where the boost multiplier calculation always returns `MAX_BOOST` if `userBoost.amount > 0`, leading to an incorrect boost determination. This makes it unfair for users that heve much boost amount and ones that have just "1".
+
+### Vulnerability Details
+
+* **Affected Function:** `BoostController:getBoostMultiplier`
+* **Issue:**
+  ```solidity
+  uint256 baseAmount = userBoost.amount * 10000 / MAX_BOOST;
+  return userBoost.amount * 10000 / baseAmount;
+  ```
+  This logic results in a division where `baseAmount` cancels out `userBoost.amount * 10000`, always returning `MAX_BOOST` when `userBoost.amount > 0`.
+
+### Impact
+
+* **Loss of Intended Functionality:** The function does not differentiate boost levels correctly.
+
+## Example of the current implementation:
+
+* Alice (userBoost.amount = 0) → Returns MIN\_BOOST (as per function logic)
+
+* Bob (userBoost.amount = 1) → Returns MAX\_BOOST
+
+* Charlie (userBoost.amount = 10000) → Returns MAX\_BOOST
+
+### Recommendations
+
+* Correct the calculation to reflect the intended scaling
+* Ensure `userBoost.amount` is factored in a way that prevents constant max boost returns.
+
+### Conclusion
+
+The current implementation of `getBoostMultiplier` results in all users receiving `MAX_BOOST`, rendering the function ineffective. Fixing the calculation will restore accurate boost determination and prevent potential manipulation.
 
 
 ## [I-1] Redundant code
