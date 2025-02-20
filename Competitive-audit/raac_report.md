@@ -5,7 +5,7 @@ Auditor: **vesko210**
 ## Issues found
 |Severtity|Number of issues found
 | ------- | -------------------- |
-| High    | 4                    |
+| High    | 5                    |
 | Medium  | 3                    |
 | Info    | 1                    |
 
@@ -277,6 +277,90 @@ Severity: High
 
 Reasoning:
 If the fees collected by the treasury aren't properly transferred to the new address before updating it (that is always the case when calling `applyTreasuryUpdate()`), there is a risk that those funds could be lost. This is a significant issue, especially if the treasury holds substantial amounts of funds. The loss of fees would directly impact the contract’s ability to distribute or use those funds, which could be catastrophic for the contract’s intended functionality.
+
+
+## [H-5] Lack of enforcement of the `MAX_TOTAL_LOCKED_AMOUNT`
+
+### Summary
+
+The issue allows users to lock more tokens than intended when creating the lock, leading to potential exploitation of the boost calculation mechanism and potential imbalances in the veRAAC ecosystem.
+
+### Vulnerability Details
+
+**Issue:**  `MAX_TOTAL_LOCKED_AMOUNT` Not Enforced
+
+The `veRAACToken` contract defines a maximum total locked amount (`MAX_TOTAL_LOCKED_AMOUNT`), intended to limit the total amount of RAAC that can be locked in the system. However, the contract does *not* enforce this limit.  While individual lock amounts (`MAX_LOCK_AMOUNT`) and lock durations (`MAX_LOCK_DURATION`) are checked, there is no check to prevent the *sum* of all locked amounts from exceeding `MAX_TOTAL_LOCKED_AMOUNT`.
+
+**Location:** `veRAACToken.sol:lock`
+
+In `veRAACToken.sol` the `lock` function can be called.
+
+Inside, the folowing functions are being called:
+
+```solidity
+_lockState.createLock(msg.sender, amount, duration);
+```
+
+where this state is updated `state.totalLocked += amount;`
+
+```solidity
+_updateBoostState(msg.sender, amount);
+```
+
+where `_boostState.totalWeight = _lockState.totalLocked;` is updated and again `totalLocked` is not checked if it exieds the `MAX_TOTAL_LOCKED_AMOUNT`
+
+```solidity
+        // Mint veTokens
+        _mint(msg.sender, newPower);
+```
+
+where `veTokens` are minted which can cause a inflation of those tokens.
+
+### Example:
+
+1. `MAX_TOTAL_LOCKED_AMOUNT` is set to 1,000,000,000e18
+
+2. The curent locedAmount = 990,000,000e18
+
+3. Alice locks 10,000,000e18 RAAC.
+
+4. Bob locks 10,000,000e18 RAAC.
+
+5. Ema locks 10,000,000e18 RAAC.
+
+The contract allows Bob's and Ema's lock, even though the total locked amount (1,020,000,000e18) now significantly exceeds `MAX_TOTAL_LOCKED_AMOUNT`.
+
+### Impact
+
+**Severity:** High
+
+**Potential Consequences:**
+
+* **Unfair Rewards:**  The boost calculation mechanism in `veRAACToken` relies on the total locked amount. Inflating the total locked amount.
+
+* **Potential for Manipulation:** The boost mechanism is tied to governance, the inflated boost could allow manipulation of governance proposals.
+
+### Tools Used
+
+* **Manual Code Review**
+
+### Recommendations
+
+1. **Enforce** **`MAX_TOTAL_LOCKED_AMOUNT`:** Add check in the `lock` function to ensure that the total locked amount does not exceed `MAX_TOTAL_LOCKED_AMOUNT`.  The provided code snippet below demonstrates the necessary changes:
+
+```Solidity
+    function lock(uint256 amount, uint256 duration) external nonReentrant whenNotPaused {
+        // ... (other checks)
+
+        if (_lockState.totalLocked + amount > _lockState.maxTotalLocked) {
+            revert TotalLockedAmountExceeded(); // Custom error
+        }
+
+        // ... (rest of the lock logic)
+    }
+```
+
+(Recommended code is not tested)
 
 
 
