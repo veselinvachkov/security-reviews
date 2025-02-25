@@ -5,7 +5,7 @@ Auditor: **vesko210**
 ## Issues found
 |Severtity|Number of issues found
 | ------- | -------------------- |
-| High    | 5                    |
+| High    | 6                    |
 | Medium  | 3                    |
 | Info    | 1                    |
 
@@ -362,6 +362,63 @@ The contract allows Bob's and Ema's lock, even though the total locked amount (1
 
 (Recommended code is not tested)
 
+
+## [H-6] Funds get stuck in the `Treasury`             
+
+
+
+## Summary
+
+This is due to the fact that instead of calling the `Treasury::deposit` function, the `FeeCollector` just transfers the RAACToken to the treasury
+
+## Vulnerability Details
+
+The problem can be located in the `FeeCollector::_processDistributions` function:
+
+```solidity
+   function _processDistributions(
+        uint256 totalFees,
+        uint256[4] memory shares
+    ) internal {
+        uint256 contractBalance = raacToken.balanceOf(address(this));
+        if (contractBalance < totalFees) revert InsufficientBalance();
+
+        if (shares[0] > 0) {
+            uint256 totalVeRAACSupply = veRAACToken.getTotalVotingPower();
+            if (totalVeRAACSupply > 0) {
+                TimeWeightedAverage.createPeriod(
+                    distributionPeriod,
+                    block.timestamp + 1,
+                    7 days,
+                    shares[0],
+                    totalVeRAACSupply
+                );
+                totalDistributed += shares[0];
+            } else {
+                shares[3] += shares[0]; // Add to treasury if no veRAAC holders
+            }
+        }
+
+        if (shares[1] > 0) raacToken.burn(shares[1]);
+        if (shares[2] > 0) raacToken.safeTransfer(repairFund, shares[2]);
+
+@>        if (shares[3] > 0) raacToken.safeTransfer(treasury, shares[3]);
+    }
+```
+
+In the pretty last line of the function we see that the `RAAC` tokens are just transferred to the treasury instead of deposited into it. This will lead to funds locked in the treasury since when the funds are transferred like this, the `Treasury::_totalValue` variable and `Treasury::_balances` mapping won't be updated
+
+## Impact
+
+`RAAC` token will be forever locked in the treasury
+
+## Tools Used
+
+Manual Review
+
+## Recommendations
+
+call the `Treasury::deposit` function instead of just transferring the tokens        
 
 
 ## [M-1] Unsafe ERC20 Transfers: Vulnerability in Deposit and Withdraw Functions
