@@ -18,7 +18,7 @@ The `updateTreasuryAddress` function allows the administrator to change the trea
 ### Impact
 This issue can lead to a complete loss of treasury funds if the update function is called without manually transferring funds beforehand. Any fees or rewards collected in the old treasury will no longer be usable by the protocol. If this function is executed without additional safeguards, the protocol’s financial operations could be severely disrupted, leading to irreversible loss of capital.
 
-## Proof of Concept
+### Proof of Concept
 
 ### Code Reference
 The problematic function is found in the contract:
