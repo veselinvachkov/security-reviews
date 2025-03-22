@@ -156,7 +156,7 @@ After the function above is called with the full amount returned by `claimableRe
     }
 ```
 ### Impact:
-- **Reputational damage:** The project's reputation can be damaged if users abuse `withdrawRewards` which will lead to many campaigns in which rewards cannot be earned. There is no limit to the possible number of campaigns, which can also result in users not being able to find a campaign that offers them rewards because there are simply too many griefed campaigns and thus users will perceive the campaigns as dishonest or manipulative. (Users will not be able to find legitimate campaigns and will not be able to participate in any because of this.)
+- **Reputational damage and DOS:** The nudge.xyz team faces a severe denial-of-service (DoS) threat, as attackers can flood the platform with an unlimited number of malicious campaigns, making it nearly impossible to identify and approve legitimate ones. With the low cost of execution, the team would be forced into an endless battle of filtering out fraudulent deployments, crippling their ability to maintain a functional and trustworthy platform. As a result, users would struggle to find, participate and most effectively create in genuine campaigns, ultimately losing trust in the ecosystem.
 
 ### Recommendation:
 
