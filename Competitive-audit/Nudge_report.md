@@ -128,8 +128,13 @@ function test_UpdateTreasuryAddressWillLoseAllFunds() public {
 
 ### Finding description
 
-The `withdrawRewards` function allows the `CAMPAIGN_ADMIN_ROLE` to withdraw any available rewards. The constructor allows any user to be assigned the `CAMPAIGN_ADMIN_ROLE`. This means that the campaign creator can arbitrarily withdraw all available rewards at any time, potentially depleting the reward pool before other participants can participate and claim rewards. This can lead to a scenario where users participate in the campaign (after `withdrawRewards` is called) but receive no rewards, effectively breaking the campaign's intended functionality and damaging user trust. Also there can be unlimited number of campaigns and if most of them are griefed with the `withdrawRewards` users will not be able to join a honorable campaign which leads to DOS.
+The `withdrawRewards` function allows the `CAMPAIGN_ADMIN_ROLE` to withdraw any available rewards. The constructor allows any user to be assigned the `CAMPAIGN_ADMIN_ROLE`. This means that the campaign creator can arbitrarily withdraw all available rewards at any time, potentially depleting the reward pool before any participants can participate. This can lead to a scenario where users can not participate in the campaign (after `withdrawRewards` is called), effectively breaking the campaign's intended functionality and damaging user trust. Also there can be unlimited number of campaigns and if most of them are griefed with the `withdrawRewards` users will not be able to join a honorable campaign which leads to DOS.
 
+The contract first has to whitelist which campaigns are available on nudge.xyz but thay can't know if `CAMPAIGN_ADMIN` will troll the campaign, and given the fact that someone can create an automated algorithm that deploys campaigns, the nudge.xyz team will be stuck with an unlimited number of troll campaigns to choose from, and the eligible one could be a grain of sand in the sea.
+
+The gas estimate for deploying this contract is going to be between 1,500,000 to 2,500,000 gas, depending on the Ethereum network conditions at the time of deployment. This means that for a attacker to deploy 100_000_000_000 campaigns (each with 2,000,000 gas, which can be lowered a lot given the fact that the attacker is going to create the attack in his favour) he will have to pay around 390-400 usd for the current price of ETH. That many contract are going to cause absolutely significant problems for the nudge.xyz team to remove all attack requests.
+
+Also, if the nudge.xyz team had a way to delete all deployments waiting for approval, it would harm honest users of the protocol, and that doesn't stop the attacker from deploying (relatively) small batches of 100_000_000 campaigns to handle this case.
 ```solidity
     //@audit CAMPAIGN_ADMIN_ROLE can be a normal user that created the campaign
     function withdrawRewards(uint256 amount) external onlyRole(CAMPAIGN_ADMIN_ROLE) {
@@ -151,84 +156,12 @@ After the function above is called with the full amount returned by `claimableRe
     }
 ```
 ### Impact:
-
-- **Lack of rewards for participants:** Users will not be able participate in the campaign after the call of `withdrawRewards` because the rewards pool will have only funds that are distributed for `pendingRewards` and for `accumulatedFees`. This creates ghost campaigns.
-
 - **Reputational damage:** The project's reputation can be damaged if users abuse `withdrawRewards` which will lead to many campaigns in which rewards cannot be earned. There is no limit to the possible number of campaigns, which can also result in users not being able to find a campaign that offers them rewards because there are simply too many griefed campaigns and thus users will perceive the campaigns as dishonest or manipulative. (Users will not be able to find legitimate campaigns and will not be able to participate in any because of this.)
 
-The only way to deactivate campaigns is when `NUDGE_ADMIN_ROLE` calls `setIsCampaignActive`, but that is a slow and manuall way, which can not catch up with a automated campaign deployment ment for griefing.
 ### Recommendation:
 
-**Restrict `withdrawRewards` to Campaign End:**
-
-- Implement a `campaignEndTimestamp` in the contract.
-- Modify the `withdrawRewards` function to only allow withdrawals after `block.timestamp >= campaignEndTimestamp`. This ensures rewards are only withdrawn after the campaign concludes and there can be no griefing from the `CAMPAIGN_ADMIN_ROLE` and also this can solve the problem with the unlimited campaigns that can be created as the old ones will be not active.
-
-- Also another idea is to deactivate the campaign every time `withdrawRewards` gets called.
-
-## [M-2]Lack of validation on `targetToken` and `rewardToken` allows deployment with unsupported ERC20 tokens
-
-### Description
-The `NudgeCampaign` contract does not enforce validation on the `targetToken` and `rewardToken` parameters in the constructor. This means that the deployer can specify non-standard ERC20 tokens (e.g., fee-on-transfer or rebasing tokens) as the `targetToken` or `rewardToken`. Such tokens are explicitly unsupported by the protocol, as stated in the documentation:
-
-> "Nudge does not support non-standard ERC20 tokens (fee-on-transfer, rebasing tokens…) and ERC20 tokens with a value returned by `decimals()` that is inaccurate or strictly above 18."
-
-Since no verification is performed in the constructor, campaigns can be created with these unsupported tokens, potentially leading to incorrect reward calculations, misallocated funds, and financial losses for participants.
-
-```solidity
-constructor(
-        uint32 holdingPeriodInSeconds_,
-        address targetToken_,
-        address rewardToken_,
-        uint256 rewardPPQ_,
-        address campaignAdmin,
-        uint256 startTimestamp_,
-        uint16 feeBps_,
-        address alternativeWithdrawalAddress_,
-        uint256 campaignId_
-    ) {
-        if (rewardToken_ == address(0) || campaignAdmin == address(0)) {
-            revert InvalidCampaignSettings();
-        }
-
-        //code...
-
-        //@audit targetToken_ and rewardToken_ are not validated if they are supported by the protocol
-@>      targetToken = targetToken_;
-@>      rewardToken = rewardToken_;
-        campaignId = campaignId_;
-
-        // Compute scaling factors based on token decimals
-        uint256 targetDecimals = targetToken_ == NATIVE_TOKEN ? 18 : IERC20Metadata(targetToken_).decimals();
-        uint256 rewardDecimals = rewardToken_ == NATIVE_TOKEN ? 18 : IERC20Metadata(rewardToken_).decimals();
-
-        // Calculate scaling factors to normalize to 18 decimals
-        targetScalingFactor = 10 ** (18 - targetDecimals);
-        rewardScalingFactor = 10 ** (18 - rewardDecimals);
-
-        //code...
-    }
-```
-
-### Impact
-- **Incorrect reward calculations:** If a fee-on-transfer token is used, the contract may assume an incorrect balance for reward calculations, leading to either excess or insufficient rewards.
-- **Rebasing token inconsistencies:** Rebasing tokens dynamically change supply, which can cause participation tracking to become unreliable.
-- **Potential loss of funds:** If the contract assumes an incorrect token balance, rewards may be miscalculated, leading to underpayment or overpayment of users.
-- **System instability:** Non-standard tokens may introduce unexpected behaviors that disrupt the campaign’s operation.
-
-### Proof of Concept
-
-**Step 1: Deploying a Campaign with a Fee-on-Transfer Token:** A malicious deployer can set a fee-on-transfer token as the `targetToken` or `rewardToken`.
-
-**Step 2: Deploying `NudgeCampaign` with the Malicious Token:** A campaign deployer initializes `NudgeCampaign` with this fee-on-transfer token.
-
-**Step 3: Users And Contract Suffer Unexpected Fees:**
-- Users who attempt to participate will send a certain amount of tokens.
-- However, they receive less than expected due to the transfer fee.
-- The contract assumes the full amount was received, leading to incorrect reward calculations.
-
-### Recommended Mitigation
-To prevent non-standard ERC20 tokens from being set as `targetToken` or `rewardToken`, the constructor should include checks that stop the deployment if non-standard ERC20 tokens are used.
+- Create a new role that will be trusted to create campaigns, this will drastically reduce the possibility of greifing for attackers.
+- Deactivate the campaign every time `withdrawRewards` is called this way, you will free up space for new campaigns.
 
 ## [M-3]Fee evasion is possible via small reallocations
 
