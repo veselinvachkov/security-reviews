@@ -159,7 +159,7 @@ After the function above is called with the full amount returned by `claimableRe
 - **Reputational damage and DOS:** The nudge.xyz team faces a severe denial-of-service (DoS) threat, as attackers can flood the platform with an unlimited number of malicious campaigns, making it nearly impossible to identify and approve legitimate ones. With the low cost of execution, the team would be forced into an endless battle of filtering out fraudulent deployments, crippling their ability to maintain a functional and trustworthy platform. As a result, users would struggle to find, participate and most effectively create in genuine campaigns, ultimately losing trust in the ecosystem.
 
 ### Recommendation:
-
+- Add a small fee for campaign deployment, the protocol is going to earn small revenue and the griefing attack is never going to be possible. The fee can be as samll as 0.10 usd, this way the attacker will have to spend 10_000 usd to deploy just 100_000 campaigns which is a huge decrease from the example i gave above in the description" section.
 - Create a new role that will be trusted to create campaigns, this will drastically reduce the possibility of greifing for attackers.
 - Deactivate the campaign every time `withdrawRewards` is called this way, you will free up space for new campaigns.
 
