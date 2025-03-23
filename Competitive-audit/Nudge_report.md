@@ -135,6 +135,71 @@ The contract first has to whitelist which campaigns are available on nudge.xyz b
 The gas estimate for deploying this contract is going to be between 1,500,000 to 2,500,000 gas, depending on the Ethereum network conditions at the time of deployment. This means that for a attacker to deploy 100_000_000_000 campaigns (each with 2,000,000 gas, which can be lowered a lot given the fact that the attacker is going to create the attack in his favour) he will have to pay around 390-400 usd for the current price of ETH. That many contract are going to cause absolutely significant problems for the nudge.xyz team to remove all attack requests.
 
 Also, if the nudge.xyz team had a way to delete all deployments waiting for approval, it would harm honest users of the protocol, and that doesn't stop the attacker from deploying (relatively) small batches of 100_000_000 campaigns to handle this case.
+```solidity 
+    /// @notice Deploys a new NudgeCampaign contract
+    /// @param holdingPeriodInSeconds Duration users must hold tokens to be eligible for rewards
+    /// @param targetToken Address of the token users need to hold
+    /// @param rewardToken Address of the token used for rewards
+    /// @param rewardPPQ The reward factor in parts per quadrillion for calculating rewards
+    /// @param campaignAdmin Address of the campaign admin
+    /// @param startTimestamp When the campaign starts
+    /// @param alternativeWithdrawalAddress Optional address for alternative reward withdrawal
+    /// @param uuid Unique identifier for the campaign
+    /// @return campaign Address of the deployed campaign contract
+    /// @dev Uses Create2 for deterministic address generation
+    function deployCampaign(
+        uint32 holdingPeriodInSeconds,
+        address targetToken,
+        address rewardToken,
+        uint256 rewardPPQ,
+        address campaignAdmin,
+        uint256 startTimestamp,
+        address alternativeWithdrawalAddress,
+        uint256 uuid
+    ) public returns (address campaign) {
+        if (campaignAdmin == address(0)) revert ZeroAddress();
+        if (targetToken == address(0) || rewardToken == address(0)) revert ZeroAddress();
+        if (holdingPeriodInSeconds == 0) revert InvalidParameter();
+
+        // Generate deterministic salt using all parameters
+        bytes32 salt = keccak256(
+            abi.encode(
+                holdingPeriodInSeconds,
+                targetToken,
+                rewardToken,
+                rewardPPQ,
+                campaignAdmin,
+                startTimestamp,
+                FEE_BPS,
+                alternativeWithdrawalAddress,
+                uuid
+            )
+        );
+
+        // Create constructor arguments
+        bytes memory constructorArgs = abi.encode(
+            holdingPeriodInSeconds,
+            targetToken,
+            rewardToken,
+            rewardPPQ,
+            campaignAdmin,
+            startTimestamp,
+            FEE_BPS,
+            alternativeWithdrawalAddress,
+            uuid
+        );
+
+        // Deploy using CREATE2
+        bytes memory bytecode = abi.encodePacked(type(NudgeCampaign).creationCode, constructorArgs);
+        campaign = Create2.deploy(0, salt, bytecode);
+
+        // Track the campaign
+        isCampaign[campaign] = true;
+        campaignAddresses.push(campaign);
+
+        emit CampaignDeployed(campaign, campaignAdmin, targetToken, rewardToken, startTimestamp, uuid);
+    }
+```
 ```solidity
     //@audit CAMPAIGN_ADMIN_ROLE can be a normal user that created the campaign
     function withdrawRewards(uint256 amount) external onlyRole(CAMPAIGN_ADMIN_ROLE) {
