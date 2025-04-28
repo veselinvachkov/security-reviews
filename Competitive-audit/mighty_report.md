@@ -6,7 +6,7 @@ Auditor: **vesko210**
 |Severtity|Number of issues found
 | ------- | -------------------- |
 | High    | 2                    |
-| Medium  | 2                    |
+| Medium  | 3                    |
 | Low     | 1                    |
 
 # Findings
@@ -442,6 +442,69 @@ This would avoid permanent locking of funds and improve the protocol’s resilie
 
 ---
 
+## [M-3] Missing slippage protection can result in users receiving less than expected
+
+## Summary
+
+The `reducePosition` function calls `_swapTokenExactInput` with `minAmountOut` set to zero. Additionally, within `_swapTokenExactInput`, `sqrtPriceLimitX96` is set to zero, which exposes users to high slippage and no price boundaries during the swap. This means there is no limit on price movement, allowing the swap to traverse through ticks and execute at potentially unfavorable prices.
+
+## Issue Description
+
+The `reducePosition` function allows users to reduce the value of their position, as shown in the following code:
+
+```solidity
+if (amount0ToSwap > 0) {
+    _swapTokenExactInput(token0, token1, amount0ToSwap, 0);
+}
+if (amount1ToSwap > 0) {
+    _swapTokenExactInput(token1, token0, amount1ToSwap, 0);
+}
+```
+
+However, as seen in the code, there is no slippage protection mechanism in place. This is problematic because the token exchange rate is based on current market prices, which can change rapidly during periods of high volatility. 
+
+While the transaction is pending in the mempool, the price may change significantly, resulting in a worse exchange rate when the transaction is finally executed.
+
+The function:
+ ```solidity
+    function _swapTokenExactInput(address tokenIn, address tokenOut, uint256 amountIn, uint256 amountOutMinimum)
+        internal
+        returns (uint256 amountOut)
+    {
+        address router =
+            IAddressRegistry(IVault(vault).addressProvider()).getAddress(AddressId.ADDRESS_ID_SHADOW_ROUTER);
+        IERC20(tokenIn).approve(router, amountIn);
+
+        amountOut = IShadowSwapRouter(router).exactInputSingle(
+            IShadowSwapRouter.ExactInputSingleParams({
+                tokenIn: tokenIn,
+                tokenOut: tokenOut,
+                tickSpacing: tickSpacing,
+                recipient: address(this),
+                deadline: block.timestamp,
+                amountIn: amountIn,
+                amountOutMinimum: amountOutMinimum,
+                sqrtPriceLimitX96: 0
+            })
+        );
+    }
+```
+"Swaps `amountIn` of one token for as much as possible of another token" but this does not guarantee that the user will receive the amount he desired.
+
+**For example:**
+
+1. A user sets `amount0ToSwap` and expects to receive 100 tokens1.
+2. While the transaction is in the mempool, the price of the tokens changes.
+3. Upon transaction execution, the user only receives 80 tokens1, resulting in a 20-token loss.
+4. The user would not have agreed to such a trade and would have expected a minimum of 99 tokens1.
+
+Since `minAmountOut = 0`, there is no safeguard to prevent the transaction from executing at this unfavorable price.
+
+## Recommendation:
+
+Allow users to specify a minimum amount they are willing to receive in order to prevent substantial losses from price slippage.
+
+---
 
 
 ## [L-1]Fee-On-Transfer token exploit in staking mechanism
