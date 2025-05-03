@@ -5,8 +5,8 @@ Auditor: **vesko210**
 ## Issues found
 |Severtity|Number of issues found
 | ------- | -------------------- |
-| High    | 2                    |
-| Medium  | 3                    |
+| High    | 3                    |
+| Medium  | 4                    |
 | Low     | 1                    |
 
 # Findings
@@ -274,6 +274,153 @@ unprofitable from any attaker.
 
 ---
 
+## [H-3] Depositors and borrowers share the same liquidity pool
+
+## Summary  
+The `lendingPool` contract allows users to deposit tokens (with or without staking), increasing the reserve’s available liquidity. However, this same liquidity is also immediately available for borrowing by other users. This shared pool model can result in insufficient liquidity when depositors attempt to withdraw their funds, violating the implicit guarantee that deposits remain accessible.
+
+## Finding Description  
+The current implementation lets users deposit tokens using `deposit()` or `depositWithStake()`, which increases the value returned by `reserve.availableLiquidity()`:
+
+```solidity
+IERC20(reserve.underlyingTokenAddress).balanceOf(reserve.eTokenAddress)
+```
+
+This liquidity is not reserved entirely for the depositor—it is made available to other users for borrowing. When a position is opened a borrow occurs, the borrowed tokens are transferred from `eTokenAddress`, which reduces `availableLiquidity`. As a result, depositors may later be unable to withdraw their funds if enough liquidity has already been borrowed.
+
+Withdraw should remain accessible unless the user explicitly chooses to lend or take on risk. Here, depositing inherently exposes users to lending risk.
+
+Problematic code: 
+```solidity
+    function _deposit(uint256 reserveId, uint256 amount, address onBehalfOf) internal returns (uint256 eTokenAmount) {
+        DataTypes.ReserveData storage reserve = getReserve(reserveId);
+        require(!reserve.getFrozen(), Errors.VL_RESERVE_FROZEN);
+        // update states
+        reserve.updateState(getTreasury());
+
+        // validate
+        reserve.checkCapacity(amount);
+ 
+        uint256 exchangeRate = reserve.reserveToETokenExchangeRate();
+
+        // Transfer the user's reserve token to eToken contract
+@>  pay(reserve.underlyingTokenAddress, _msgSender(), reserve.eTokenAddress, amount);
+
+        // Mint eTokens for the user
+        eTokenAmount = amount.mul(exchangeRate).div(Precision.FACTOR1E18);
+
+        IExtraInterestBearingToken(reserve.eTokenAddress).mint(onBehalfOf, eTokenAmount);
+
+        // update the interest rate after the deposit
+        reserve.updateInterestRates();
+    }
+```
+```solidity
+    function openPosition(OpenPositionParams calldata params)
+        external
+        payable
+        nonReentrant
+        checkDeadline(params.deadline)
+    {
+        (uint256 _positionId, address _positionAddress) = _createNewPosition();
+
+        PositionInfo storage positionInfo = positionInfos[_positionId];
+        positionInfo.owner = msg.sender;
+        positionInfo.vaultId = vaultId;
+        positionInfo.positionAddress = _positionAddress;
+        positionInfo.positionId = _positionId;
+        positionIds[msg.sender].push(_positionId);
+        positionAddressToId[_positionAddress] = _positionId;
+
+        // 1. Transferfrom initial user capital from user wallet
+        if (params.amount0Principal > 0) {
+            pay(token0, msg.sender, address(this), params.amount0Principal);
+        }
+        if (params.amount1Principal > 0) {
+            pay(token1, msg.sender, address(this), params.amount1Principal);
+        }
+
+        // 2. Borrow from lending pool
+        address lendingPool = getLendingPool();
+        if (params.amount0Borrow > 0) {
+            positionInfo.token0DebtId = ILendingPool(lendingPool).newDebtPosition(token0ReserveId);
+@>      ILendingPool(lendingPool).borrow(address(this), positionInfo.token0DebtId, params.amount0Borrow);
+        }
+        
+        if (params.amount1Borrow > 0) {
+            positionInfo.token1DebtId = ILendingPool(lendingPool).newDebtPosition(token1ReserveId);
+@>      ILendingPool(lendingPool).borrow(address(this), positionInfo.token1DebtId, params.amount1Borrow);
+        }
+        // code...
+    }
+```
+```solidity
+    function _redeem(uint256 reserveId, uint256 eTokenAmount, address to, bool receiveNativeETH)
+        internal
+        returns (uint256)
+    {
+        DataTypes.ReserveData storage reserve = getReserve(reserveId);
+        // update states
+        reserve.updateState(getTreasury());
+
+        // calculate underlying tokens using eTokens
+        uint256 underlyingTokenAmount =
+            reserve.eTokenToReserveExchangeRate().mul(eTokenAmount).div(Precision.FACTOR1E18);
+
+@>  require(underlyingTokenAmount <= reserve.availableLiquidity(), Errors.VL_CURRENT_AVAILABLE_LIQUIDITY_NOT_ENOUGH);
+
+        // code...
+    }
+```
+```solidity
+    /**
+     * @dev Get the available liquidity not borrowed out.
+     * @param reserve The Reserve Object
+     * @return liquidity
+     */
+    function availableLiquidity(DataTypes.ReserveData storage reserve) internal view returns (uint256 liquidity) {
+        liquidity = IERC20(reserve.underlyingTokenAddress).balanceOf(reserve.eTokenAddress);
+    }
+```
+
+## Impact Explanation  
+**Impact: High**
+
+- Users may be **unable to withdraw their deposited funds** if liquidity has been borrowed by others. This risk increases during times when a lot of positions are being opened and high borrowing demand occures or during market volatility.
+
+- A lack of liquidity for withdrawals can **trigger panic or cascading withdrawals**, potentially destabilizing the system.
+
+## Likelihood Explanation  
+**Likelihood: Medium**
+
+This is not an edge case or an exploit scenario. It is expected behavior under normal protocol usage. The risk materializes simply from high borrowing activity and redeem demand.
+
+## Proof of Concept  
+1. Suppose `availableLiquidity()` is initially 10,000.  
+2. User A deposits 1,000 via `deposit()`.  
+3. `availableLiquidity()` becomes 11,000.  
+4. User B borrows 10,900.  
+5. User A (or any depositor) attempts to withdraw their 1,000.  
+6. The withdrawal fails—only 100 units of the token remain in the pool.
+
+In detail:
+- Users deposit via `deposit()` or `depositWithStake()`, increasing available liquidity.
+- Borrowers use `openPosition` in `ShadowRangeVault`, which invokes:
+
+```solidity
+ILendingPool(lendingPool).borrow(address(this), positionInfo.token0DebtId, params.amount0Borrow);
+ILendingPool(lendingPool).borrow(address(this), positionInfo.token1DebtId, params.amount1Borrow);
+```
+
+- These calls reduce available liquidity.
+- Later, a user attempts to withdraw via `redeem()` in `LiquidityPool`, but the transaction reverts due to insufficient liquidity.
+
+## Recommendation  
+Introduce mechanisms to protect depositors' ability to withdraw:
+
+- **Separate liquidity pools**: One for users who explicitly agree to lend, and another for those who only wish to deposit or stake without risk.
+- **Minimum reserve ratio**: Reserve a fixed portion of liquidity (non-borrowable) to ensure redeems can succeed. This does not fully eliminate the risk but reduces its likelihood.
+
 
 ## [M-1] Liquidation risk due to mutable liquidationDebtRatio
 
@@ -505,6 +652,92 @@ Since `minAmountOut = 0`, there is no safeguard to prevent the transaction from 
 Allow users to specify a minimum amount they are willing to receive in order to prevent substantial losses from price slippage.
 
 ---
+
+## [M-4] Missing slippage protection in Uniswap V3 minting
+
+## Summary
+The `mint` function inside of `ShadowRangePositionImpl:openPosition` allows users to mint Uniswap V3 positions without slippage protection.
+
+## Finding Description
+The function constructs a `MintParams` struct for the Uniswap V3 `nonfungiblePositionManager.mint()` call using the following parameters:
+
+```solidity
+(tokenId, liquidity, amount0, amount1) = IShadowNonfungiblePositionManager(shadowNonfungiblePositionManager)
+            .mint(
+            IShadowNonfungiblePositionManager.MintParams({
+                token0: token0,
+                token1: token1,
+                tickSpacing: tickSpacing,
+                tickLower: params.tickLower,
+                tickUpper: params.tickUpper,
+                amount0Desired: params.amount0Desired,
+                amount1Desired: params.amount1Desired,
+@>              amount0Min: 0,
+@>              amount1Min: 0,
+                recipient: address(this),
+                deadline: block.timestamp
+            })
+        );
+```
+
+Setting both `amount0Min` and `amount1Min` to zero disables any slippage protection during liquidity provisioning.
+
+A malicious actor can frontrun the transaction by moving the price in the pool, causing a large portion of the user's tokens to go unused or be exchanged at an unfavorable rate.
+
+**As stated in the Uniswap V3 documentation:**
+
+Link to the documentation - https://docs.uniswap.org/contracts/v3/guides/providing-liquidity/mint-a-position
+
+> We set amount0Min and amount1Min to zero for the example - but this would be a vulnerability in production. A function calling mint 
+> with no slippage protection would be vulnerable to a frontrunning attack designed to execute the mint call at an inaccurate price.
+> For a more secure practice the developer would need to implement a slippage estimation process.
+
+## Impact Explanation
+
+The impact is **Medium**, because this is used when the protocol integrates leverage or borrowing. An attacker could consistently manipulate price before minting, causing capital to be underutilized or mispriced, leading to financial inefficiencies or even direct fund extraction.
+
+**If no price is guaranteed via slippage bounds, then even honest users may unknowingly mint positions at a loss**.
+
+## Likelihood Explanation
+
+The likelihood is **Medium**. This could be exploited by any user or bot with the ability to frontrun a transaction. The Ethereum mempool makes this feasible and relatively easy for attackers with MEV capabilities or fast block submission.
+
+## Proof of Concept
+
+1. An attacker monitors the mempool.
+2. The attacker submits a frontrunning transaction that shifts the pool price significantly (swaps large amount of one token).
+3. The `mint()` function uses the manipulated price without slippage protection (`amount0Min: 0`, `amount1Min: 0`).
+4. The position is minted at a poor rate or with only partial amounts.
+
+## Recommendation
+
+Always use reasonable slippage bounds in minting operations. Let users define or compute `amount0Min` and `amount1Min` dynamically based on real-time market prices and acceptable slippage percentages.
+
+### Suggested Fix
+
+```solidity
+uint256 slippageBps = 200; // 2% slippage
+uint256 amount0Min = amount0ToMint * (10_000 - slippageBps) / 10_000;
+uint256 amount1Min = amount1ToMint * (10_000 - slippageBps) / 10_000;
+
+INonfungiblePositionManager.MintParams memory params =
+    INonfungiblePositionManager.MintParams({
+        token0: DAI,
+        token1: USDC,
+        fee: poolFee,
+        tickLower: TickMath.MIN_TICK,
+        tickUpper: TickMath.MAX_TICK,
+        amount0Desired: amount0Desired,
+        amount1Desired: amount1Desired,
+        amount0Min: amount0Min,
+        amount1Min: amount1Min,
+        recipient: address(this),
+        deadline: block.timestamp
+    });
+```
+
+Ideally, allow the caller to pass a user-defined slippage tolerance for even more flexibility and safety.
+
 
 
 ## [L-1]Fee-On-Transfer token exploit in staking mechanism
