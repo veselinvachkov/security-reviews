@@ -6,7 +6,7 @@ Auditor: **vesko210**
 |Severtity|Number of issues found
 | ------- | -------------------- |
 | High    | 3                    |
-| Medium  | 4                    |
+| Medium  | 5                    |
 | Low     | 1                    |
 
 # Findings
@@ -738,6 +738,100 @@ INonfungiblePositionManager.MintParams memory params =
 
 Ideally, allow the caller to pass a user-defined slippage tolerance for even more flexibility and safety.
 
+## [M-5] Performance fee changes affect existing positions and the protocol revenue
+
+## Summary
+
+The `performanceFee` in the `ShadowRangeVault` can be updated at any time by the contract owner. This can lead to users being charged higher performance fees than expected when a user claim rewards from previously opened positions, this is going lower the user return for his position. On the other hand if performance fee is lowered while there are opened positions the protocol is going to lose a portion of its profit.
+
+---
+
+## Finding Description
+
+The protocol allows users to open positions and later when any of these functions is caled `closePosition, reducePosition, liquidatePosition, claimRewards` thay trigger `claimCallback` function. Performance fee is applied based on the global `performanceFee` variable. However, this variable is mutable and can be updated at any time using the `setPerformanceFee` function by the contract owner.
+
+```solidity
+function setPerformanceFee(uint256 _performanceFee) external onlyOwner { 
+    performanceFee = _performanceFee;
+}
+```
+
+The `claimCallback` function calculates the fee at the time of reward claiming, not at the time the position was opened:
+
+```solidity
+uint256 feeAmount = amount * performanceFee / 10000;
+```
+
+Because of this, a user who opened a position under one fee assumption may face a significantly higher fee upon claiming rewards, especially if the fee was increased after the position was opened. Or the protocol is going to miss out on fees if `performanceFee` is lowered.
+
+Here is a link to a similar finding of mine - https://cantina.xyz/code/616d8bb4-16ce-4ca9-9ce9-5b99d6e146ef/findings/284
+
+---
+
+## Impact Explanation
+
+This issue has a **High** impact:
+When increasing the performanceFee:
+* This results in users paying more performance fees than they should for the active positions before the rate change
+* Affected users cannot plan or accurately predict their returns.
+
+When decreasing the performanceFee:
+
+* This results in the protocol receiving less performance fees than they should for the active positions before the rate change
+* The uncollected fees are unfairly distributed to users
+
+It affects **all users with open positions** if the fee is modified during their lifecycle.
+
+---
+
+## Likelihood Explanation
+
+This issue has a **Low** likelihood:
+
+The probability of this issue occurring is depending on how often `performanceFee` is changed, with use of the function `setPerformanceFeeRate` the issue would occur for users who have an opened position:
+
+As stated in the documentation:
+> Issues that require admin actions are considered with low likelihood
+---
+
+## Proof of Concept
+
+1. User Alice opens a position when `performanceFee` is 20% (2000 basis points).
+2. Alice accrues 1000 reward tokens.
+3. Before she calls `claimRewards`, the contract owner sets `performanceFee` to 30% (3000 basis points).
+4. When Alice claims, she receives only 700 tokens instead of the 800 she expected.
+
+This shows that her accrued rewards were retroactively affected by a fee change that she could not anticipate.
+
+---
+
+## Recommendation
+
+Record the `performanceFee` in the `positionInfos` struct at the time the position is opened. Use this stored fee when applying fees in `claimCallback`, instead of the mutable global variable.
+
+### Suggested Fix
+
+Update `positionInfos` to include `uint256 initialPerformanceFee;`:
+
+```solidity
+struct PositionInfo {
+    address owner;
+    ...
+    uint256 initialPerformanceFee;
+}
+```
+
+Then, store the fee at position creation:
+
+```solidity
+positionInfos[newPositionId].initialPerformanceFee = performanceFee;
+```
+
+And modify `claimCallback`:
+
+```solidity
+uint256 feeAmount = amount * positionInfos[positionId].initialPerformanceFee / 10000;
+```
 
 
 ## [L-1]Fee-On-Transfer token exploit in staking mechanism
