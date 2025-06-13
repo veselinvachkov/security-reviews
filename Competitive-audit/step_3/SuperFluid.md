@@ -49,7 +49,7 @@ Avoid hardcoding full-range tick values. Instead:
 Let users pass in `tickLower` and `tickUpper` as parameters to `provideLiquidity`. This gives experienced users control over capital placement and optimizes yield potential.
 
 
-## [H-1] Insufficient LP_OPERATION_DEADLINE exposes liquidity functions to DoS in high volatile times
+## [H-2] Insufficient LP_OPERATION_DEADLINE exposes liquidity functions to DoS in high volatile times
 
 ## Summary 
 The hard‑coded 1‑minute `LP_OPERATION_DEADLINE` for Uniswap V3 mint/decrease calls can easily expire under normal network conditions, causing transaction reverts and denial of service for liquidity operations.
@@ -103,7 +103,7 @@ Increase the deadline to match Uniswap frontend defaults:
 Allow users to define a custom deadline (within a safe range, e.g., 1–20 minutes) when initiating liquidity operations, increasing flexibility across various network conditions.
 
 
-## [H-1] Unconditional disconnection on partial unstake halts rewards
+## [L-1] Unconditional disconnection on partial unstake halts rewards
 
 ## Summary 
 Unstaking any amount—no matter how small—always calls `disconnectPool(...)`, fully severing the locker’s connection to the staker distribution pool even if some stake remains.
@@ -152,6 +152,4 @@ Only disconnect when the user’s entire staked balance goes below the minimum f
 +    if (_stakedBalance < 1e18) {
 +        FLUID.disconnectPool(STAKER_DISTRIBUTION_POOL);
      }
-```
-
 ```
