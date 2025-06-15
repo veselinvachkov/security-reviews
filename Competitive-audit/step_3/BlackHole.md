@@ -5,7 +5,8 @@ Auditor: **vesko210**
 ## Issues found
 |Severtity|Number of issues found
 | ------- | -------------------- |
-| High    | 3                    |
+| High    | 2                    |
+| Low     | 1                    |
 
 # Findings
 
@@ -140,7 +141,7 @@ Remove the `if (_weekly < TAIL_START)` conditional and apply `tailEmissionRate` 
 This allows the DAO to truly control emissions starting at epoch 67, as promised in the docs.
 
 
-# [H-1] Emission schedule deviation: 1% weekly decrease instead of increase
+# [L-1] Emission schedule deviation: 1% weekly decrease instead of increase
 
 ## Summary
 
