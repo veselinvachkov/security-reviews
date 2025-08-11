@@ -5,8 +5,8 @@ Auditor: **vesko210**
 ## Issues found
 |Severtity|Number of issues found
 | ------- | -------------------- |
-| High    | 3                    |
-| Medium  | 5                    |
+| High    | 4                    |
+| Medium  | 3                    |
 | Low     | 1                    |
 | Info    | 1                    |
 
@@ -1153,4 +1153,5 @@ function liquidateBorrowFresh(
      uint256 actualRepayAmount = repayBorrowFresh(liquidator, borrower, repayAmount);
      /* ... continue liquidation ... */
  }
+
 ```
